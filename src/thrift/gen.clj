@@ -3,10 +3,9 @@
   (:import (org.apache.thrift.meta_data FieldMetaData FieldValueMetaData
                                         StructMetaData EnumMetaData ListMetaData MapMetaData SetMetaData)
            (org.apache.thrift.protocol TType)
-           (org.apache.thrift TFieldRequirementType)
-           clojure.lang.Reflector
-           (java.lang.reflect Method Field))
-  (:use flatland.useful.debug))
+           (org.apache.thrift TFieldRequirementType TFieldIdEnum TUnion)
+           (java.lang.reflect Method Field)
+           (java.nio ByteBuffer)))
 
 (set! *warn-on-reflection* true)
 
@@ -15,14 +14,22 @@
 
 (declare struct-gen)
 
-(defmulti primitive-generator identity)
+(defmulti primitive-generator (fn [^FieldValueMetaData desc]
+                                (.type desc)))
 
 (defmethod primitive-generator TType/BOOL [_] gen/boolean)
 (defmethod primitive-generator TType/BYTE [_] gen/byte)
-(defmethod primitive-generator TType/I16 [_] (gen/choose Short/MIN_VALUE Short/MAX_VALUE))
-(defmethod primitive-generator TType/I32 [_] (gen/choose Integer/MIN_VALUE Integer/MAX_VALUE))
+(defmethod primitive-generator TType/I16 [_] (gen/fmap short (gen/choose
+                                                          Short/MIN_VALUE Short/MAX_VALUE)))
+(defmethod primitive-generator TType/I32 [_] (gen/fmap int (gen/choose
+                                                            Integer/MIN_VALUE Integer/MAX_VALUE)))
 (defmethod primitive-generator TType/I64 [_] (gen/choose Long/MIN_VALUE Long/MAX_VALUE))
-(defmethod primitive-generator TType/STRING [_] gen/string)
+(defmethod primitive-generator TType/STRING [^FieldValueMetaData desc]
+  (gen/fmap (if (.isBinary desc)
+              (fn [^String s]
+                (ByteBuffer/wrap (.getBytes s "UTF-8")))
+              identity)
+            gen/string))
 
 (defmulti generator class)
 
@@ -45,34 +52,51 @@
 
 ;; primitives all share a single class
 (defmethod generator :default [^FieldValueMetaData desc]
-  (primitive-generator (.type desc)))
+  (primitive-generator desc))
+
+(defn field-generator [^Class class union? make-copy]
+  (fn [field-meta]
+    (let [field-name (key field-meta)
+          set-arg field-name
+          ^FieldMetaData desc (val field-meta)
+          required (= TFieldRequirementType/REQUIRED (.requirementType desc))
+          field-gen (generator (.valueMetaData desc))
+          build-args (into-array Class [(type field-name) Object])]
+      (if union?
+        (let [constructor (.getDeclaredConstructor class build-args)]
+          {:gen (gen/fmap (fn [field]
+                            (.newInstance constructor (object-array [set-arg field])))
+                          field-gen)})
+        (let [setter (.getMethod class "setFieldValue" build-args)
+              set-field (fn [m v]
+                          (.invoke ^Method setter m (object-array [set-arg v])))]
+          {:required required, :bind (fn [m]
+                                       (gen/fmap (fn [field]
+                                                   (doto (make-copy m)
+                                                     (set-field field)))
+                                                 field-gen))})))))
 
 (defn struct-gen [^Class class]
-  (let [meta (static-field class "metaDataMap")]
-    (reduce (fn [gen field-meta]
-              (let [field-name (key field-meta)
-                    ^FieldMetaData desc (val field-meta)
-                    required (= TFieldRequirementType/REQUIRED (.requirementType desc))
-                    include-gen (if required
-                                  (gen/return true)
-                                  gen/boolean)
-                    field-gen (generator (.valueMetaData desc))
-                    copy-method (.getMethod class "deepCopy" (into-array Class []))
-                    [setter] (Reflector/getMethods class 2 "setFieldValue" false)
-                    set-field (fn [m k v]
-                                (?! [setter m k v])
-                                (.invoke ^Method setter m (object-array [k v])))]
-                (gen/bind gen
-                          (fn [m]
-                            (gen/bind include-gen
-                                      (fn [include?]
-                                        (if-not include?
-                                          (gen/return m)
-                                          (gen/bind field-gen
-                                                    (fn [field]
-                                                      (let [copy (.invoke copy-method m
-                                                                          (object-array 0))]
-                                                        (set-field copy field-name field)
-                                                        (gen/return copy)))))))))))
-            (gen/return (.newInstance class))
-            meta)))
+  (let [union? (.isAssignableFrom TUnion class)
+        meta (static-field class "metaDataMap")
+        template (gen/return (.newInstance class))
+        copy-method (.getMethod class "deepCopy" (into-array Class []))
+        make-copy (fn [m] m (.invoke copy-method m (object-array 0)))
+        field-generators (map (field-generator class union? make-copy) meta)]
+    (if union?
+      (gen/bind (gen/elements field-generators)
+                (fn [{:keys [gen]}]
+                  gen))
+      (reduce (fn [gen {:keys [required bind]}]
+                (let [include-gen (if required
+                                    (gen/return true)
+                                    gen/boolean)]
+
+                  (gen/bind gen
+                            (fn [m]
+                              (gen/bind include-gen
+                                        (fn [include?]
+                                          (if-not include?
+                                            (gen/return m)
+                                            (bind m))))))))
+              template, field-generators))))
