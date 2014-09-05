@@ -4,8 +4,8 @@
                                         StructMetaData EnumMetaData ListMetaData MapMetaData SetMetaData)
            (org.apache.thrift.protocol TType)
            (org.apache.thrift TFieldRequirementType TFieldIdEnum TUnion)
-           (java.lang.reflect Method Field)
-           (java.nio ByteBuffer)))
+           (java.nio ByteBuffer))
+  (:use flatland.useful.debug))
 
 (set! *warn-on-reflection* true)
 
@@ -57,7 +57,7 @@
 (defn field-generator [^Class class union? make-copy]
   (fn [field-meta]
     (let [field-name (key field-meta)
-          set-arg field-name
+          args #(object-array [field-name %])
           ^FieldMetaData desc (val field-meta)
           required (= TFieldRequirementType/REQUIRED (.requirementType desc))
           field-gen (generator (.valueMetaData desc))
@@ -65,11 +65,11 @@
       (if union?
         (let [constructor (.getDeclaredConstructor class build-args)]
           {:gen (gen/fmap (fn [field]
-                            (.newInstance constructor (object-array [set-arg field])))
+                            (.newInstance constructor (args field)))
                           field-gen)})
         (let [setter (.getMethod class "setFieldValue" build-args)
               set-field (fn [m v]
-                          (.invoke ^Method setter m (object-array [set-arg v])))]
+                          (.invoke setter m (args v)))]
           {:required required, :bind (fn [m]
                                        (gen/fmap (fn [field]
                                                    (doto (make-copy m)
