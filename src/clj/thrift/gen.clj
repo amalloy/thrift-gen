@@ -81,7 +81,7 @@
         meta (static-field class "metaDataMap")
         template (gen/return (.newInstance class))
         copy-method (.getMethod class "deepCopy" (into-array Class []))
-        make-copy (fn [m] m (.invoke copy-method m (object-array 0)))
+        make-copy (fn [m] (.invoke copy-method m (object-array 0)))
         field-generators (map (field-generator class union? make-copy) meta)]
     (if union?
       (gen/bind (gen/elements field-generators)
