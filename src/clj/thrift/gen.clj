@@ -79,24 +79,20 @@
 (defn struct-gen [^Class class]
   (let [union? (.isAssignableFrom TUnion class)
         meta (static-field class "metaDataMap")
-        template (gen/return (.newInstance class))
         copy-method (.getMethod class "deepCopy" (into-array Class []))
         make-copy (fn [m] (.invoke copy-method m (object-array 0)))
         field-generators (map (field-generator class union? make-copy) meta)]
     (if union?
-      (gen/bind (gen/elements field-generators)
-                (fn [{:keys [gen]}]
-                  gen))
-      (reduce (fn [gen {:keys [required bind]}]
-                (let [include-gen (if required
-                                    (gen/return true)
-                                    gen/boolean)]
-
-                  (gen/bind gen
-                            (fn [m]
-                              (gen/bind include-gen
-                                        (fn [include?]
-                                          (if-not include?
-                                            (gen/return m)
-                                            (bind m))))))))
-              template, field-generators))))
+      (-> (gen/elements field-generators)
+          (gen/bind :gen))
+      (->> field-generators
+           (reduce (fn [gen {:keys [required bind]}]
+                     (let [include-gen (if required
+                                         (gen/return true)
+                                         gen/boolean)]
+                       (bind-do [m gen,
+                                 include include-gen]
+                                (if-not include
+                                  (gen/return m)
+                                  (bind m)))))
+                   (gen/return (.newInstance class)))))))
