@@ -9,7 +9,7 @@
 
 (set! *warn-on-reflection* true)
 
-(defn static-field [^Class class field-name]
+(defn read-static-field [^Class class field-name]
   (.get (.getField class field-name) nil))
 
 (declare struct-gen)
@@ -78,7 +78,7 @@
 
 (defn struct-gen [^Class class]
   (let [union? (.isAssignableFrom TUnion class)
-        meta (static-field class "metaDataMap")
+        meta (read-static-field class "metaDataMap")
         copy-method (.getMethod class "deepCopy" (into-array Class []))
         make-copy (fn [m] (.invoke copy-method m (object-array 0)))
         field-generators (map (field-generator class union? make-copy) meta)]
