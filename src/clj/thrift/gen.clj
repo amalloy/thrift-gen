@@ -40,36 +40,37 @@
               identity)
             gen/string))
 
-(defmulti generator class)
+(defmulti generator (fn [meta overrides] (class meta)))
 
-(defmethod generator StructMetaData [^StructMetaData desc]
-  (struct-gen (.structClass desc)))
+(defmethod generator StructMetaData [^StructMetaData desc overrides]
+  (struct-gen (.structClass desc) overrides))
 
-(defmethod generator ListMetaData [^ListMetaData desc]
-  (gen/list (generator (.elemMetaData desc))))
+(defmethod generator ListMetaData [^ListMetaData desc overrides]
+  (gen/list (generator (.elemMetaData desc) overrides)))
 
-(defmethod generator SetMetaData [^SetMetaData desc]
-  (gen/fmap set (gen/list (generator (.elemMetaData desc)))))
+(defmethod generator SetMetaData [^SetMetaData desc overrides]
+  (gen/fmap set (gen/list (generator (.elemMetaData desc)
+                                     overrides))))
 
-(defmethod generator MapMetaData [^MapMetaData desc]
-  (gen/map (generator (.keyMetaData desc))
-           (generator (.valueMetaData desc))))
+(defmethod generator MapMetaData [^MapMetaData desc overrides]
+  (gen/map (generator (.keyMetaData desc) overrides)
+           (generator (.valueMetaData desc) overrides)))
 
-(defmethod generator EnumMetaData [^EnumMetaData desc]
+(defmethod generator EnumMetaData [^EnumMetaData desc overrides]
   (let [c (.enumClass desc)]
     (gen/elements (.getEnumConstants c))))
 
 ;; primitives all share a single class
-(defmethod generator :default [^FieldValueMetaData desc]
+(defmethod generator :default [^FieldValueMetaData desc overrides]
   (primitive-generator desc))
 
-(defn field-generator [^Class class union? make-copy]
+(defn field-generator [^Class class overrides union? make-copy]
   (fn [field-meta]
     (let [field-name (key field-meta)
           args #(object-array [field-name %])
           ^FieldMetaData desc (val field-meta)
           required (= TFieldRequirementType/REQUIRED (.requirementType desc))
-          field-gen (generator (.valueMetaData desc))
+          field-gen (generator (.valueMetaData desc) overrides)
           build-args (into-array Class [(type field-name) Object])]
       (if union?
         (let [constructor (.getDeclaredConstructor class build-args)]
@@ -85,23 +86,30 @@
                                                      (set-field field)))
                                                  field-gen))})))))
 
-(defn struct-gen [^Class class]
-  (let [union? (.isAssignableFrom TUnion class)
-        meta (read-static-field class "metaDataMap")
-        copy-method (.getMethod class "deepCopy" (into-array Class []))
-        make-copy (fn [m] (.invoke copy-method m (object-array 0)))
-        field-generators (map (field-generator class union? make-copy) meta)]
-    (if union?
-      (-> (gen/elements field-generators)
-          (gen/bind :gen))
-      (->> field-generators
-           (reduce (fn [gen {:keys [required bind]}]
-                     (let [include-gen (if required
-                                         (gen/return true)
-                                         gen/boolean)]
-                       (bind-do [m gen,
-                                 include include-gen]
-                                (if-not include
-                                  (gen/return m)
-                                  (bind m)))))
-                   (gen/return (.newInstance class)))))))
+(defn struct-gen
+  ([class]
+     (struct-gen class {}))
+  ([^Class class override-generators]
+   (let [union? (.isAssignableFrom TUnion class)
+         meta (read-static-field class "metaDataMap")
+         copy-method (.getMethod class "deepCopy" (into-array Class []))
+         make-copy (fn [m] (.invoke copy-method m (object-array 0)))
+         field-generators (map (field-generator class override-generators union? make-copy)
+                               meta)
+         gen (if union?
+               (-> (gen/elements field-generators)
+                   (gen/bind :gen))
+               (->> field-generators
+                    (reduce (fn [gen {:keys [required bind]}]
+                              (let [include-gen (if required
+                                                  (gen/return true)
+                                                  gen/boolean)]
+                                (bind-do [m gen,
+                                          include include-gen]
+                                         (if-not include
+                                           (gen/return m)
+                                           (bind m)))))
+                            (gen/return (.newInstance class)))))]
+     (if-let [f (override-generators class)]
+       (gen/fmap f gen)
+       gen))))
