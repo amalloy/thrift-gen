@@ -9,6 +9,15 @@
 
 (set! *warn-on-reflection* true)
 
+(defmacro bind-do [actions body]
+  (if (empty? actions)
+    body
+    (let [[binding generator] (take 2 actions)]
+      `(gen/bind ~generator
+                 (fn [~binding]
+                   (bind-do [~@(drop 2 actions)]
+                     ~body))))))
+
 (defn read-static-field [^Class class field-name]
   (.get (.getField class field-name) nil))
 
