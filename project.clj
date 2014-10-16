@@ -1,4 +1,4 @@
-(defproject amalloy/thrift-gen "0.1.0"
+(defproject amalloy/thrift-gen "0.2.0-SNAPSHOT"
   :description "quickcheck generators for producing instances of Thrift schemas"
   :url "http://example.com/FIXME"
   :license {:name "Eclipse Public License"
