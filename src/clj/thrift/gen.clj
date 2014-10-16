@@ -111,5 +111,7 @@
                                            (bind m)))))
                             (gen/return (.newInstance class)))))]
      (if-let [f (override-generators class)]
-       (gen/fmap f gen)
+       (gen/fmap #(doto (make-copy %)
+                    (f))
+                 gen)
        gen))))
