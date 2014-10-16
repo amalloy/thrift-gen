@@ -8,4 +8,4 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [org.clojure/test.check "0.5.9"]
                  [org.flatland/useful "0.11.1"]
-                 [org.apache.thrift/libthrift "0.6.1"]])
+                 [org.apache.thrift/libthrift "0.9.1"]])
